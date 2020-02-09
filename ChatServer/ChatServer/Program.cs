@@ -28,6 +28,7 @@ namespace ChatServer
 		const string UserConnected = "User connected";
 		const string GetAllChatsQuery = "Get all chat's list";
 		const string MessageQuery = "Send message to certain chat";
+		const string UserLeftGroup = "User left group";
 		const string AddUserToGroupQuery = "Add user to group";
 		const string Host = "235.5.5.1";
 		const char Separator = '|';
@@ -80,13 +81,19 @@ namespace ChatServer
 					case AddUserToGroupQuery:
 						groupName = body.Split(Separator, 2)[1];
 						string memberName = body.Split(Separator, 2)[0];
-						Send(MessageQuery, $"{memberName} joined the group {groupName}", namePortsMapping[groupName], groupName);
+						Send(MessageQuery, groupName + Separator + $"{memberName} joined the group {groupName}", namePortsMapping[groupName], groupName);
 						Send(AddUserToGroupQuery, namePortsMapping[groupName].ToString() + Separator + groupName, namePortsMapping[memberName], memberName);
 						break;
+					case UserLeftGroup:
+						groupName = body.Split(Separator, 2)[1];
+						memberName = body.Split(Separator, 2)[0];
+						Send(MessageQuery, groupName + Separator + $"{memberName} leaved the group {groupName}", namePortsMapping[groupName], groupName);
+						break;
 					case MessageQuery:
-						string text = body.Split(Separator, 2)[1];
-						string receiver = body.Split(Separator, 2)[0];
-						Send(MessageQuery, text, namePortsMapping[receiver], receiver);
+						string text = body.Split(Separator, 3)[2];
+						string receiver = body.Split(Separator, 3)[0];
+						string sender = body.Split(Separator, 3)[1];
+						Send(MessageQuery, sender + Separator + text, namePortsMapping[receiver], receiver);
 						break;
 					case UserConnected:
 						string userName = body.Split(Separator, 2)[0];

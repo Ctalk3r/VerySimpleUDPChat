@@ -26,27 +26,34 @@ namespace VerySimpleUDPChat
 		const string GetAllChatsQuery = "Get all chat's list";
 		const string MessageQuery = "Send message to certain chat";
 		const string AddUserToGroupQuery = "Add user to group";
+		const string UserLeftGroup = "User left group";
 		const char Separator = '|';
+		const string CommonChat = "CommonChat";
 		int userPort = -1;
 		const string Host = "235.5.5.1";
-		private Dictionary<int, UdpClient> listenedPort = new Dictionary<int, UdpClient>();
+		private Dictionary<String, UdpClient> listenedPort = new Dictionary<String, UdpClient>();
 		private HashSet<String> groupNames = new HashSet<string>();
-		private HashSet<String> allGroupes = new HashSet<string>();
+		private HashSet<String> allGroups = new HashSet<string>();
+		private HashSet<String> allUsers = new HashSet<string>();
+		private List<ValueTuple<String, String>> allMessages = new List<ValueTuple<String, String>>();
+		private int lastSelectedIndex = 0;
 
 		public Form1()
 		{
 			InitializeComponent();
-
+			chatListView.Items.Add(CommonChat);
 		}
 
 		private void sendButton_Click(object sender, EventArgs e)
 		{
-			if (messageTextBox.Text.Length == 0 || chatComboBox.SelectedIndex < 0)
+			if (messageTextBox.Text.Length == 0 || chatListView.FocusedItem == null)
 				return;
-			string message = $"(from {userName}): {messageTextBox.Text}";
-			if(Send(MessageQuery, chatComboBox.SelectedItem.ToString() + Separator + message))
+			string message = $"{Separator}from {userName}{Separator}: {messageTextBox.Text}";
+			string chatName = chatListView.FocusedItem.Text;
+			if (Send(MessageQuery, chatName + Separator + (allGroups.Contains(chatName) ? chatName : userName) + Separator + message))
 			{
 				chatTextBox.Text = messageTextBox.Text + "\r\n" + chatTextBox.Text;
+				allMessages.Add((chatName, messageTextBox.Text));
 				messageTextBox.Clear();
 			}
 		}
@@ -67,14 +74,13 @@ namespace VerySimpleUDPChat
 		private void inputButton_Click(object sender, EventArgs e)
 		{
 			userName = inputTextBox.Text;
-			if (userName.Length == 0 || userName.Contains(Separator) || chatComboBox.Items.Contains(userName))
+			if (userName.Length == 0 || userName.Contains(Separator) || allUsers.Contains(userName))
 			{
 				MessageBox.Show("Bad name");
 				return;
 			}
 			inputTextBox.ReadOnly = true;
 			inputButton.Enabled = false;
-			sendButton.Enabled = true;
 
 			label3.Visible = true;
 			groupNameTextBox.Enabled = true;
@@ -100,12 +106,11 @@ namespace VerySimpleUDPChat
 			}
 		}
 
-		private void ReceiveMessages(Action ProcessMessage)
+		private void ReceiveMessages(Func<bool> ProcessMessage)
 		{
 			try
 			{
-				while (true)
-					ProcessMessage();
+				while (ProcessMessage()) ;
 			}
 			catch (ObjectDisposedException)
 			{
@@ -117,21 +122,30 @@ namespace VerySimpleUDPChat
 			}
 		}
 
-		private void ProcessGroupMessage(int port)
+		private bool ProcessGroupMessage(string groupName)
 		{
 			IPEndPoint remoteIp = null;
-			byte[] data = listenedPort[port].Receive(ref remoteIp);
+			byte[] data = listenedPort[groupName].Receive(ref remoteIp);
+			if (!listenedPort.ContainsKey(groupName))
+				return false;
 			string message = Encoding.Unicode.GetString(data);
 			string header = message.Split(new char[] { Separator }, 2)[0];
 			string body = message.Split(new char[] { Separator }, 2)[1];
+			string sender = body.Split(new char[] { Separator }, 2)[0];
+			string text = body.Split(new char[] { Separator }, 2)[1];
+			if (text.Contains(Separator) && text.Split(new char[] { Separator }, 3)[1].Split(' ')[1] == userName)
+				return true;
 			Invoke(new MethodInvoker(() =>
 			{
-				chatTextBox.Text = body + "\r\n" + chatTextBox.Text;
+				if ((lastSelectedIndex == 0 || chatListView.Items[lastSelectedIndex].Text == sender))
+					chatTextBox.Text = text + "\r\n" + chatTextBox.Text;
+				allMessages.Add((sender, text));
 			}));
+			return true;
 		}
 
 
-		private void ProcessUserMessage()
+		private bool ProcessUserMessage()
 		{
 			IPEndPoint remoteIp = null;
 			byte[] data = userClient.Receive(ref remoteIp);
@@ -149,9 +163,9 @@ namespace VerySimpleUDPChat
 					newClient.ExclusiveAddressUse = false;
 					newClient.Client.Bind(localPoint);
 					newClient.JoinMulticastGroup(IPAddress.Parse(Host), 50);
-					listenedPort.Add(port, newClient);
+					listenedPort.Add(groupName, newClient);
 					groupNames.Add(groupName);
-					Task receiveTask = new Task(() => ReceiveMessages(() => ProcessGroupMessage(port)));
+					Task receiveTask = new Task(() => ReceiveMessages(() => ProcessGroupMessage(groupName)));
 
 					Invoke(new MethodInvoker(() =>
 					{
@@ -160,8 +174,8 @@ namespace VerySimpleUDPChat
 							{
 								chatListView.Items[i].ForeColor = Color.Green;
 							}
+						UpdateChat();
 					}));
-					chatComboBox.Items.Add(groupName);
 					receiveTask.Start();
 					break;
 				case GetAllChatsQuery:
@@ -175,15 +189,21 @@ namespace VerySimpleUDPChat
 							}
 						}));
 					break;
-				default:
+				case MessageQuery:
+					string sender = body.Split(new char[] { Separator }, 2)[0];
+					string text = body.Split(new char[] { Separator }, 2)[1];
 					Invoke(new MethodInvoker(() =>
 					{
-						chatTextBox.Text = body + "\r\n" + chatTextBox.Text;
+						if (lastSelectedIndex == 0 || chatListView.Items[lastSelectedIndex].Text == sender)
+							chatTextBox.Text = text + "\r\n" + chatTextBox.Text;
+						allMessages.Add((sender, text));
 					}));
 					break;
 			}
+			return true;
+
 		}
-		private void ProcessServerMessage()
+		private bool ProcessServerMessage()
 		{
 			IPEndPoint remoteIp = null;
 			byte[] data = serverClient.Receive(ref remoteIp);
@@ -194,7 +214,7 @@ namespace VerySimpleUDPChat
 			{
 				case UserPortQuery:
 					if (userPort != -1)
-						return;
+						return true;
 					userPort = int.Parse(body);
 					userClient = new UdpClient(userPort);
 					userClient.JoinMulticastGroup(IPAddress.Parse(Host), 50);
@@ -214,6 +234,7 @@ namespace VerySimpleUDPChat
 				default:
 					break;
 			}
+			return true;
 		}
 
 		~Form1()
@@ -227,7 +248,7 @@ namespace VerySimpleUDPChat
 			{
 				if (chatListView.FocusedItem.Bounds.Contains(e.Location))
 				{
-					if (allGroupes.Contains(chatListView.FocusedItem.Text))
+					if (allGroups.Contains(chatListView.FocusedItem.Text))
 					{
 						if (groupNames.Contains(chatListView.FocusedItem.Text))
 							contextMenuStrip2.Show(Cursor.Position);
@@ -235,6 +256,11 @@ namespace VerySimpleUDPChat
 							contextMenuStrip1.Show(Cursor.Position);
 					}
 				}
+			} 
+			else if (e.Button == MouseButtons.Left && lastSelectedIndex != chatListView.FocusedItem.Index)
+			{
+				lastSelectedIndex = chatListView.FocusedItem.Index;
+				UpdateChat();
 			}
 		}
 
@@ -244,30 +270,46 @@ namespace VerySimpleUDPChat
 		}
 		private void leaveToolStripMenuItem_Click(object sender, EventArgs e)
 		{
-			MessageBox.Show(chatListView.FocusedItem.Text);
+			groupNames.Remove(chatListView.FocusedItem.Text);
+			listenedPort.Remove(chatListView.FocusedItem.Text);
+			Invoke(new MethodInvoker(() =>
+			{
+				chatListView.FocusedItem.ForeColor = Color.Red;
+				UpdateChat();
+			}));
+			Send(UserLeftGroup, userName + Separator + chatListView.FocusedItem.Text);
 		}
 
 		private void createGroupButton_Click(object sender, EventArgs e)
 		{
 			string groupName = groupNameTextBox.Text;
-			if (groupName.Length == 0 || groupName.Contains(Separator) || allGroupes.Contains(groupName))
+			if (groupName.Length == 0 || groupName.Contains(Separator) || allGroups.Contains(groupName))
 			{
 				MessageBox.Show("Bad name");
 				return;
 			}
 
 			Send(GroupPortQuery, groupName + Separator + userName);
-			groupNameTextBox.Clear();
 		}
 
 		private void UpdateChats(string chatName, string type)
 		{
 			chatListView.Items.Add(chatName);
 			chatListView.Items[chatListView.Items.Count - 1].ForeColor = type == "user" ? Color.Blue : Color.Red;
+			allUsers.Add(chatName);
 			if (type == "group")
-				allGroupes.Add(chatName);
+				allGroups.Add(chatName);
+		}
+
+		private void UpdateChat()
+		{
+			if (chatListView.FocusedItem == null)
+				return;
+			sendButton.Enabled = lastSelectedIndex != 0 && (!allGroups.Contains(chatListView.FocusedItem.Text) || groupNames.Contains(chatListView.FocusedItem.Text));
+			if (!allGroups.Contains(chatListView.FocusedItem.Text) || groupNames.Contains(chatListView.FocusedItem.Text))
+				chatTextBox.Text = string.Join("\r\n", allMessages.FindAll(tuple => chatListView.FocusedItem.Text == CommonChat || tuple.Item1 == userName || tuple.Item1 == chatListView.FocusedItem.Text).Select(tuple => tuple.Item2).Reverse());
 			else
-				chatComboBox.Items.Add(chatName);
+				chatTextBox.Clear();
 		}
 	}
 }
