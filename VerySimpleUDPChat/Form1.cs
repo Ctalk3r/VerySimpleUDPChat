@@ -27,6 +27,8 @@ namespace VerySimpleUDPChat
 		const string MessageQuery = "Send message to certain chat";
 		const string AddUserToGroupQuery = "Add user to group";
 		const string UserLeftGroup = "User left group";
+		const string UserDisconnected = "User disconnected";
+		const string RemoveChat = "Chat disconnected";
 		const char Separator = '|';
 		const string CommonChat = "CommonChat";
 		int userPort = -1;
@@ -41,7 +43,6 @@ namespace VerySimpleUDPChat
 		public Form1()
 		{
 			InitializeComponent();
-			chatListView.Items.Add(CommonChat);
 		}
 
 		private void sendButton_Click(object sender, EventArgs e)
@@ -79,6 +80,7 @@ namespace VerySimpleUDPChat
 				MessageBox.Show("Bad name");
 				return;
 			}
+			chatListView.Items.Add(CommonChat);
 			inputTextBox.ReadOnly = true;
 			inputButton.Enabled = false;
 
@@ -118,7 +120,8 @@ namespace VerySimpleUDPChat
 			}
 			catch (Exception ex)
 			{
-				MessageBox.Show(ex.Message);
+				if (!ex.Message.Contains("WSACancelBlockingCall"))
+					MessageBox.Show(ex.Message);
 			}
 		}
 
@@ -177,6 +180,11 @@ namespace VerySimpleUDPChat
 						UpdateChat();
 					}));
 					receiveTask.Start();
+					allMessages.Add((groupName, $"User {userName} joined the group {groupName}"));
+					Invoke(new MethodInvoker(() =>
+					{
+						chatTextBox.Text = $"User {userName} joined the group {groupName}" + "\r\n" + chatTextBox.Text;
+					}));
 					break;
 				case GetAllChatsQuery:
 					string[] chats = body.Split(Separator);
@@ -221,6 +229,7 @@ namespace VerySimpleUDPChat
 					Task receiveTask = new Task(() => ReceiveMessages(ProcessUserMessage));
 					receiveTask.Start();
 					Send(UserConnected, userName + Separator + userPort);
+					Invoke(new MethodInvoker(() => disconnectButton.Enabled = true));
 					break;
 				case AddedNewChat:
 					string chatName = body.Split(new char[] { Separator }, 2)[0];
@@ -231,6 +240,29 @@ namespace VerySimpleUDPChat
 							UpdateChats(chatName, type);
 						}));
 					break;
+				case RemoveChat:
+					chatName = body.Split(new char[] { Separator }, 2)[0];
+					type = body.Split(new char[] { Separator }, 2)[1];
+					if (type == "group")
+					{
+						groupNames.Remove(chatName);
+						allGroups.Remove(chatName);
+					}
+					else
+						allUsers.Remove(chatName);
+					Invoke(new MethodInvoker(() =>
+					{
+						int pos = -1;
+						for (int i = 0; i < chatListView.Items.Count; ++i)
+							if (chatListView.Items[i].Text == chatName)
+							{
+								pos = i;
+								break;
+							}
+						if (pos != -1)
+							chatListView.Items.RemoveAt(pos);
+					}));
+					break;
 				default:
 					break;
 			}
@@ -239,7 +271,10 @@ namespace VerySimpleUDPChat
 
 		~Form1()
 		{
-			serverClient.Close();
+			if (serverClient.Client.Connected)
+				serverClient.Close();
+			if (userClient.Client.Connected)
+				userClient.Close();
 		}
 
 		private void listView1_MouseClick(object sender, MouseEventArgs e)
@@ -271,6 +306,7 @@ namespace VerySimpleUDPChat
 		private void leaveToolStripMenuItem_Click(object sender, EventArgs e)
 		{
 			groupNames.Remove(chatListView.FocusedItem.Text);
+			listenedPort[chatListView.FocusedItem.Text].Close();
 			listenedPort.Remove(chatListView.FocusedItem.Text);
 			Invoke(new MethodInvoker(() =>
 			{
@@ -310,6 +346,41 @@ namespace VerySimpleUDPChat
 				chatTextBox.Text = string.Join("\r\n", allMessages.FindAll(tuple => chatListView.FocusedItem.Text == CommonChat || tuple.Item1 == userName || tuple.Item1 == chatListView.FocusedItem.Text).Select(tuple => tuple.Item2).Reverse());
 			else
 				chatTextBox.Clear();
+		}
+
+		private void disconnectButton_Click(object sender, EventArgs e)
+		{
+			foreach(var group in groupNames)
+			{
+				listenedPort[group].Close();
+				listenedPort.Remove(group);
+				Send(UserLeftGroup, userName + Separator + group);
+			}
+			groupNames.Clear();
+			allGroups.Clear();
+			allUsers.Clear();
+			allUsers.Clear();
+			lastSelectedIndex = 0;
+			userPort = -1;
+			userClient.Close();
+
+			disconnectButton.Enabled = false;
+			inputButton.Enabled = true;
+			inputTextBox.ReadOnly = false;
+
+			label3.Visible = false;
+			groupNameTextBox.Visible = false;
+			groupNameTextBox.Enabled = false;
+			createGroupButton.Visible = false;
+			createGroupButton.Enabled = false;
+			Invoke(new MethodInvoker(() =>
+			{
+				chatListView.Clear();
+				chatTextBox.Clear();
+			}));
+			Send(UserDisconnected, userName);
+			serverClient.Close();
+
 		}
 	}
 }

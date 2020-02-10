@@ -26,10 +26,12 @@ namespace ChatServer
 		const string GroupPortQuery = "Get free port for group";
 		const string AddedNewChat = "New chat connected";
 		const string UserConnected = "User connected";
+		const string UserDisconnected = "User disconnected";
 		const string GetAllChatsQuery = "Get all chat's list";
 		const string MessageQuery = "Send message to certain chat";
 		const string UserLeftGroup = "User left group";
 		const string AddUserToGroupQuery = "Add user to group";
+		const string RemoveChat = "Chat disconnected";
 		const string Host = "235.5.5.1";
 		const char Separator = '|';
 		Dictionary<string, int> namePortsMapping;
@@ -108,6 +110,10 @@ namespace ChatServer
 						Send(GetAllChatsQuery, string.Join(Separator, response), port, userName);
 						namePortsMapping.Add(userName, port);
 						Send(AddedNewChat, userName + Separator + "user");
+						break;
+					case UserDisconnected:
+						Send(RemoveChat, body + Separator + "user");
+						namePortsMapping.Remove(body);
 						break;
 					default:
 						Console.WriteLine($"Server gets: {query}");
